@@ -41,7 +41,8 @@ module Devise
         @ldap_auth_username_builder = params[:ldap_auth_username_builder]
         
         @group_base = ldap_config["group_base"]
-        @required_groups = ldap_config["required_groups"]        
+        @required_groups = ldap_config["required_groups"]  
+        @optional_groups = ldap_config["optional_groups"]        
         @required_attributes = ldap_config["require_attribute"]
         
         @ldap.auth ldap_config["admin_user"], ldap_config["admin_password"] if params[:admin] 
@@ -57,7 +58,7 @@ module Devise
         ldap_entry = nil
         @ldap.search(:filter => filter) {|entry| ldap_entry = entry}
         if ldap_entry.nil?
-          @ldap_auth_username_builder.call(@attribute,@login,@ldap)
+          ::Devise.ldap_auth_username_builder.call(@attribute,@login,@ldap)
         else
           ldap_entry.dn
         end
@@ -74,7 +75,7 @@ module Devise
       
       def authorized?
         DeviseLdapAuthenticatable::Logger.send("Authorizing user #{dn}")
-        authenticated? && in_required_groups? && has_required_attribute?
+        authenticated? && in_optional_groups? && has_required_attribute?
       end
       
       def change_password!
@@ -106,6 +107,35 @@ module Devise
         
         return true
       end
+
+      def in_optional_groups?     
+        return true unless ::Devise.ldap_check_group_membership
+        
+        ## FIXME set errors here, the ldap.yml isn't set properly.
+        return false if @optional_groups.nil?   
+           
+        admin_ldap = LdapConnect.admin
+                
+        for group in @optional_groups
+          if group.is_a?(Array)
+            group_attribute, group_name = group
+          else
+            group_attribute = "member"
+            group_name = group
+          end
+          #DeviseLdapAuthenticatable::Logger.send("Checking group: #{group_name}")
+          admin_ldap.search(:base => group_name, :scope => Net::LDAP::SearchScope_BaseObject) do |entry|
+            #DeviseLdapAuthenticatable::Logger.send("Found group: #{group_name}")
+            if entry[group_attribute].include? dn
+              DeviseLdapAuthenticatable::Logger.send("User is in group: #{group_name }")
+              return true
+            end
+            #DeviseLdapAuthenticatable::Logger.send("User #{dn} is not in group: #{group_name }")
+          end
+        end
+        
+        return false
+      end
       
       def has_required_attribute?
         return true unless ::Devise.ldap_check_attributes
@@ -126,10 +156,15 @@ module Devise
       
       def user_groups
         admin_ldap = LdapConnect.admin
-        
-        DeviseLdapAuthenticatable::Logger.send("Getting groups for #{dn}")
-        filter = Net::LDAP::Filter.eq("uniqueMember", dn)
-        admin_ldap.search(:filter => filter, :base => @group_base).collect(&:dn)
+        DeviseLdapAuthenticatable::Logger.send("Getting groups for #{@login}")
+        user = admin_ldap.search(:filter => "CN=#{@login}").try(:first)
+        result = nil
+        if user
+          filter = Net::LDAP::Filter.eq("member", user.dn)
+          result = admin_ldap.search(:filter => filter, :base => @group_base).collect(&:CN)
+        end
+        DeviseLdapAuthenticatable::Logger.send("Groups found: #{result}")
+        result
       end
       
       private
