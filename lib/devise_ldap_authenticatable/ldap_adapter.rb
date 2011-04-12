@@ -157,7 +157,7 @@ module Devise
       def user_groups
         admin_ldap = LdapConnect.admin
         DeviseLdapAuthenticatable::Logger.send("Getting groups for #{@login}")
-        user = admin_ldap.search(:filter => "CN=#{@login}").try(:first)
+        user = admin_ldap.search(:filter => "#{@attribute}=#{@login}").try(:first)
         result = nil
         if user
           filter = Net::LDAP::Filter.eq("member", user.dn)
